@@ -224,8 +224,40 @@
     return { full: full, prefix: prefix };
   }
 
+  // 30th CELEBRATION カードセット（2026-10-16 発売、御三家ごとに 9 種）。「30thセット ヒトカゲ」のように略称＋御三家の1匹で書く
+  var CARD_SET_ALIASES = ['30thセット', '30thカードセット', '30thcelebrationカードセット', 'カードセット', '30周年セット', '30周年カードセット'];
+  var CARD_SET_TRIOS = [
+    ['フシギダネ', 'ヒトカゲ', 'ゼニガメ'], ['チコリータ', 'ヒノアラシ', 'ワニノコ'], ['キモリ', 'アチャモ', 'ミズゴロウ'],
+    ['ナエトル', 'ヒコザル', 'ポッチャマ'], ['ツタージャ', 'ポカブ', 'ミジュマル'], ['ハリマロン', 'フォッコ', 'ケロマツ'],
+    ['モクロー', 'ニャビー', 'アシマリ'], ['サルノリ', 'ヒバニー', 'メッソン'], ['ニャオハ', 'ホゲータ', 'クワッス']
+  ];
+  function byCardSet(it) {
+    var words = it.input.normalize('NFKC').trim().split(/\s+/);
+    if (words.length < 2) return Promise.resolve(null);
+    var head = norm(words.slice(0, -1).join('')), mon = norm(words[words.length - 1]);
+    if (CARD_SET_ALIASES.map(norm).indexOf(head) < 0) return Promise.resolve(null);
+    var trio = CARD_SET_TRIOS.filter(function (t) { return t.map(norm).indexOf(mon) >= 0; })[0];
+    if (!trio) return Promise.resolve(null);
+    var isSet = function (r) { return norm(r.name).indexOf('30th') >= 0 && norm(r.name).indexOf('カードセット') >= 0; };
+    return search('30th CELEBRATION カードセット').then(function (res) {
+      return res.filter(isSet).length ? res : search('カードセット');
+    }).then(function (res) {
+      var sets = res.filter(isSet);
+      var hit = sets.filter(function (r) { return trio.some(function (p) { return norm(r.name).indexOf(norm(p)) >= 0; }); });
+      if (hit.length === 1) {
+        it.info = '「' + it.input + '」→ ' + hit[0].name + ' として扱いました';
+        it.cands = sets;
+        return [hit[0]];
+      }
+      return sets.length ? { res: hit.length ? hit : sets } : null;
+    });
+  }
+
   // 略称・種類の読み替えで1件に決まれば、それを返す
   function byExpand(it) {
+    return byCardSet(it).then(function (r) { return r || byAlias(it); });
+  }
+  function byAlias(it) {
     var e = expand(it.input);
     if (!e) return Promise.resolve(null);
     return search(e.full).then(function (res) {
