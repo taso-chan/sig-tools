@@ -1,5 +1,5 @@
 // SIG在庫引きツール（sig-platform の上でブックマークから起動）
-// 商品名と個数の一覧を受け取り、浅草橋の在庫を「手動変更」で減らす／増やす（在庫管理画面の「更新」と同じ送信）。
+// 商品名と個数の一覧を受け取り、浅草橋の在庫を「手動変更」で減らす／増やす（カテゴリ在庫画面の「削減」「追加」と同じ送信）。
 (function () {
   'use strict';
   var LOCATION_ID = '3'; // 浅草橋
@@ -112,23 +112,28 @@
     });
   }
 
-  // カテゴリ在庫画面から、その商品の更新フォームと今の在庫数を取る
+  // カテゴリ在庫画面から、その商品の行（「削減」ボタンの data）と、削減・追加の送信フォームを取る
+  // 2026-10-20 サイト更新：行ごとの在庫上書きフォームが無くなり、「追加」「削減」の共通モーダル（adjustments/add・reduce）になった
   function getProduct(cat, name) {
     return getDoc('/admin/category-stocks/' + cat + '?location_id=' + LOCATION_ID + '&keyword=' + encodeURIComponent(name)).then(function (d) {
       var hit = [];
-      d.querySelectorAll('form[data-manual-stock-update-form]').forEach(function (f) {
-        var tr = f.closest('tr');
-        if (!tr || norm(tr.children[2] && tr.children[2].textContent) !== norm(name)) return;
-        hit.push(f);
+      d.querySelectorAll('main table tbody tr').forEach(function (tr) {
+        if (!tr.querySelector('[data-stock-reduce-open]') || norm(tr.children[2] && tr.children[2].textContent) !== norm(name)) return;
+        hit.push(tr);
       });
       if (hit.length !== 1) throw new Error(hit.length ? '同じ名前の商品が' + hit.length + '件あり、特定できません' : 'カテゴリ在庫画面で商品が見つかりません');
-      var f = hit[0];
-      var tr = f.closest('tr');
-      var stock = num(f.querySelector('[name="stock"]').value);
+      var tr = hit[0];
+      var b = tr.querySelector('[data-stock-reduce-open]');
+      var stock = num(b.getAttribute('data-expected-before-stock'));
       if (stock == null) throw new Error('在庫数が読めません');
+      var reduce = d.querySelector('form[action$="/adjustments/reduce"]'), add = d.querySelector('form[action$="/adjustments/add"]');
+      if (!reduce || !add) throw new Error('在庫の削減・追加フォームが見つかりません（サイトがまた変わった可能性）');
+      var cost = tr.querySelector('[data-average-cost-open]');
       return {
         cat: cat, name: tr.children[2].textContent.trim(), jan: tr.children[1].textContent.trim(),
-        pid: tr.children[0].textContent.trim(), stock: stock, form: f
+        pid: b.getAttribute('data-product-id'), stock: stock,
+        avgCost: cost ? parseFloat(cost.getAttribute('data-average-cost')) || null : null, // 小数あり。未設定なら null
+        reduce: reduce, add: add
       };
     });
   }
@@ -142,11 +147,16 @@
       return getDoc(url).then(function (d) {
         var t = Array.prototype.find.call(d.querySelectorAll('table'), function (t) { return t.textContent.indexOf('変更理由') >= 0; });
         if (!t) return rows;
+        // 列は見出しの名前で探す（サイト更新で単価・平均原価などの列が増えて位置が変わったため）
+        var head = Array.prototype.map.call(t.querySelectorAll('thead th'), function (th) { return th.textContent.trim(); });
+        var ci = {};
+        ['変更日', '変更数', '変更前', '変更後', '変更理由', '詳細理由', '担当者'].forEach(function (h) { ci[h] = head.indexOf(h); });
+        if (ci['変更数'] < 0 || ci['変更後'] < 0 || ci['変更理由'] < 0 || ci['詳細理由'] < 0) throw new Error('在庫履歴の列が読めません（サイトがまた変わった可能性）');
         var trs = t.querySelectorAll('tbody tr');
         trs.forEach(function (tr) {
           var c = Array.prototype.map.call(tr.children, function (td) { return td.textContent.trim().replace(/\s+/g, ' '); });
-          if (c.length < 12) return;
-          rows.push({ date: c[0], diff: num(c[1]), before: num(c[2]), after: num(c[3]), reason: c[4], detail: c[5], user: c[11] });
+          if (c.length < head.length) return;
+          rows.push({ date: c[ci['変更日']], diff: num(c[ci['変更数']]), before: num(c[ci['変更前']]), after: num(c[ci['変更後']]), reason: c[ci['変更理由']], detail: c[ci['詳細理由']], user: c[ci['担当者']] });
         });
         var hasNext = !!d.querySelector('a[href*="history_page=' + (n + 1) + '"]');
         return hasNext && n < 20 ? page(n + 1) : rows;
@@ -315,8 +325,8 @@
       return historyToday(p).then(function (hs) {
         var done = hs.filter(isOurs).reduce(function (a, h) { return a + (h.diff || 0); }, 0);
         it.done = done; // 今日すでに同じ理由で動かした数（マイナス）
-        // 在庫が足りなくても引く（マイナスになる）。一覧で目立たせるだけ
-        if (p.stock + delta(it) < 0) it.info = (it.info ? it.info + '／' : '') + '引いた後マイナスになります（在庫 ' + p.stock + '）';
+        // サイト更新後は在庫より多くは引けない（在庫0以下だと「削減」ボタンが押せない）→ 送らずに赤で残す
+        if (p.stock + delta(it) < 0) { it.why = '在庫不足：在庫 ' + p.stock + ' に対して ' + it.qty + '個は引けません'; it.use = false; }
       });
     }).catch(function (e) { it.product = null; it.why = e.message; it.use = false; });
   }
@@ -349,8 +359,6 @@
       (state.sign > 0 ? '　<b class="info">【足す】</b>' : '　<b>【引く】</b>');
     var ng = its.length - ready.length;
     if (ng) html += '　<b class="ng">要対応：' + ng + '商品</b>（赤い行）';
-    var minus = ready.filter(function (it) { return it.product.stock + delta(it) < 0; });
-    if (minus.length) html += '<br><span class="info">変更後にマイナスになる商品：' + minus.length + '（そのまま引きます）</span>';
     var dup = its.filter(function (it) { return it.product && it.done; });
     if (dup.length) html += '<br><span class="info">今日すでに「' + esc(state.reason) + '」で在庫を動かした記録がある商品：' + dup.length + '（二重にならないか確認してください）</span>';
     html += '</div><table><tr><th>実行</th><th>行</th><th>商品</th><th>今の在庫</th><th>変更数</th><th>変更後</th><th>メモ</th></tr>';
@@ -389,9 +397,8 @@
     var target = state.items.filter(function (it) { return it.product && !it.why && it.use && !it.result; });
     if (!target.length) return;
     var total = target.reduce(function (a, it) { return a + it.qty; }, 0);
-    var minus = target.filter(function (it) { return it.product.stock + delta(it) < 0; }).length;
     if (!confirm((state.sign > 0 ? '【足す】浅草橋の在庫に ' : '【引く】浅草橋の在庫から ') + target.length + '商品（合計 ' + total + '個）を' + state.word + 'ます。\n' +
-      (minus ? 'うち ' + minus + '商品は在庫がマイナスになります。\n' : '') + '在庫履歴に「手動変更・' + state.reason + '」として残ります。\n元に戻すには在庫管理画面で手で直す必要があります。\n\n実行しますか？')) return;
+      '在庫履歴に「手動変更・' + state.reason + '」として残ります。\n元に戻すには在庫管理画面で手で直す必要があります。\n\n実行しますか？')) return;
     lock(true);
     var ok = 0, ng = 0, i = 0;
     function next() {
@@ -417,19 +424,25 @@
     next();
   }
 
-  // 1商品：直前に在庫を読み直す → 在庫数を「今 ± 数」で更新 → 在庫履歴で確かめる
+  // 1商品：直前に在庫を読み直す → 「削減」「追加」で個数を送る → 在庫履歴で確かめる
   function one(it) {
     return getProduct(it.product.cat, it.product.name).then(function (p) {
       var before = p.stock, after = before + delta(it);
       it.before = before; it.after = after;
+      if (after < 0) throw new Error('在庫不足：今の在庫 ' + before + ' に対して ' + it.qty + '個は引けません');
+      var form = state.sign > 0 ? p.add : p.reduce;
       var fd = new FormData();
-      Array.prototype.forEach.call(p.form.elements, function (el) {
-        if (!el.name || el.type === 'checkbox' || el.type === 'submit') return;
+      Array.prototype.forEach.call(form.elements, function (el) {
+        if (!el.name || el.type === 'checkbox' || el.type === 'submit' || el.type === 'button') return;
         fd.append(el.name, el.value);
       });
-      fd.set('stock', String(after));
-      fd.set('manual_change_reason_detail', state.reason);
-      return fetch(p.form.action, { method: 'POST', body: fd, credentials: 'same-origin' }).then(function (r) {
+      fd.set('product_id', p.pid);
+      fd.set('expected_before_stock', String(before)); // 読み直した後に在庫が動いていたらサイト側で止めてもらう
+      fd.set('quantity', String(it.qty));
+      fd.set('reason', state.reason);
+      // 足すときは「追加合計原価」が必須。平均原価×個数（未設定なら0円）にして、平均原価が変わらないようにする
+      if (state.sign > 0) fd.set('total_cost', String(Math.round((p.avgCost || 0) * it.qty)));
+      return fetch(form.action, { method: 'POST', body: fd, credentials: 'same-origin' }).then(function (r) {
         if (!r.ok) throw new Error('送信エラー HTTP ' + r.status);
         return historyToday(p);
       }).then(function (hs) {
