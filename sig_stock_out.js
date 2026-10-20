@@ -1,10 +1,10 @@
 // SIG在庫引きツール（sig-platform の上でブックマークから起動）
-// 商品名と個数の一覧を受け取り、浅草橋の在庫を「手動変更」で減らす／増やす（カテゴリ在庫画面の「削減」「追加」と同じ送信）。
+// 商品名と個数の一覧を受け取り、浅草橋の在庫を手で減らす／増やす（カテゴリ在庫画面の「削減」「追加」と同じ送信）。
 (function () {
   'use strict';
   var LOCATION_ID = '3'; // 浅草橋
   var PANEL_ID = 'sig-stock-out-panel';
-  var VERSION = '10/20-B'; // 直したら更新する（小窓のタイトルに出して、新しい版か見分ける）
+  var VERSION = '10/20-C'; // 直したら更新する（小窓のタイトルに出して、新しい版か見分ける）
 
   if (location.hostname !== 'sig-platform.com') {
     alert('sig-platform.com にログインした画面で押してください。');
@@ -167,7 +167,8 @@
     return page(1);
   }
 
-  function isOurs(h) { return h.reason === '手動変更' && norm(h.detail) === norm(state.reason); }
+  // 変更理由は、サイト更新前は「手動変更」、更新後は削減が「手動在庫削減」（追加は未確認なので「手動〜」なら何でも）
+  function isOurs(h) { return /^手動/.test(h.reason) && norm(h.detail) === norm(state.reason); }
 
   // ---------- 略称・種類 ----------
   // 略称 → 正式名（sig-platform の商品名の【】を除いた部分）。ネットで使われている通称を集めたもの。足りなければここに追加する
@@ -404,7 +405,7 @@
     if (!target.length) return;
     var total = target.reduce(function (a, it) { return a + it.qty; }, 0);
     if (!confirm((state.sign > 0 ? '【足す】浅草橋の在庫に ' : '【引く】浅草橋の在庫から ') + target.length + '商品（合計 ' + total + '個）を' + state.word + 'ます。\n' +
-      '在庫履歴に「手動変更・' + state.reason + '」として残ります。\n元に戻すには在庫管理画面で手で直す必要があります。\n\n実行しますか？')) return;
+      '在庫履歴に「' + (state.sign > 0 ? '手動在庫追加' : '手動在庫削減') + '・' + state.reason + '」として残ります。\n元に戻すには在庫管理画面で手で直す必要があります。\n\n実行しますか？')) return;
     lock(true);
     var ok = 0, ng = 0, i = 0;
     function next() {
