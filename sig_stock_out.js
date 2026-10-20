@@ -4,7 +4,7 @@
   'use strict';
   var LOCATION_ID = '3'; // 浅草橋
   var PANEL_ID = 'sig-stock-out-panel';
-  var VERSION = '10/20'; // 直したら更新する（小窓のタイトルに出して、新しい版か見分ける）
+  var VERSION = '10/20-B'; // 直したら更新する（小窓のタイトルに出して、新しい版か見分ける）
 
   if (location.hostname !== 'sig-platform.com') {
     alert('sig-platform.com にログインした画面で押してください。');
@@ -71,6 +71,7 @@
     text.split(/\r?\n/).forEach(function (raw, i) {
       var line = raw.trim();
       if (!line) return;
+      if (/^(午前|午後|朝|昼|夕方?|夜)?の?ピック[:：]?$/.test(line)) return; // 報告の見出し「午前ピック」などは飛ばす
       var name = line, qty = 1, whole = null, m;
       // 「名前<タブ or ,>2」「名前 ×2」「名前 2個」
       if ((m = line.match(/^(.+?)\s*[\t,，]\s*([0-9０-９]+)\s*(?:個|点|箱|枚|BOX)?$/i)) ||
@@ -202,6 +203,10 @@
     'ガイスト': '漆黒のガイスト', 'シャイスタ': 'シャイニースターV',
     'ストエメ': 'ストームエメラルダ', 'エメラルダ': 'ストームエメラルダ',
     '25thアニコレ': '25th ANNIVERSARY COLLECTION', '25アニコレ': '25th ANNIVERSARY COLLECTION', 'アニコレ': '25th ANNIVERSARY COLLECTION',
+    // ポケモンセンターのスペシャルBOX（午前ピックの報告では「トウホク 47」のように地名だけで来る。2026-10-20）
+    'トウホク': 'スペシャルBOX トウホク', '東北': 'スペシャルBOX トウホク',
+    'ヒロシマ': 'スペシャルBOX ヒロシマ', '広島': 'スペシャルBOX ヒロシマ',
+    'フクオカ': 'スペシャルBOX フクオカ', '福岡': 'スペシャルBOX フクオカ',
     // ワンピース（「OP1」「OP-01」のような番号は下の expand で読み替える）
     'ロマドン': 'OP-01 ロマンスドーン'
   };
