@@ -4,6 +4,7 @@
   'use strict';
   var LOCATION_ID = '3'; // 浅草橋
   var PANEL_ID = 'sig-stock-out-panel';
+  var VERSION = '10/20'; // 直したら更新する（小窓のタイトルに出して、新しい版か見分ける）
 
   if (location.hostname !== 'sig-platform.com') {
     alert('sig-platform.com にログインした画面で押してください。');
@@ -34,7 +35,7 @@
     '#' + PANEL_ID + ' tr.skip td{background:#fbe9e7}' +
     '</style>' +
     '<button class="x" data-act="close" title="閉じる">×</button>' +
-    '<h2 data-role="handle">SIG 在庫引き（浅草橋）<small>ここをドラッグで移動</small></h2>' +
+    '<h2 data-role="handle">SIG 在庫引き（浅草橋）<small>' + VERSION + '版・ここをドラッグで移動</small></h2>' +
     '<div>① その日に抜いた商品を1行に1商品ずつ（「商品名 個数」、個数を省くと1個）</div>' +
     '<textarea data-role="input" placeholder="【BOX】アビスアイ 2&#10;【BOX】ニンジャスピナー ×3"></textarea>' +
     '<div style="margin:6px 0">' +
