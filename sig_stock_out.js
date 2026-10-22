@@ -4,7 +4,7 @@
   'use strict';
   var LOCATION_ID = '3'; // 浅草橋
   var PANEL_ID = 'sig-stock-out-panel';
-  var VERSION = '10/20-C'; // 直したら更新する（小窓のタイトルに出して、新しい版か見分ける）
+  var VERSION = '10/22'; // 直したら更新する（小窓のタイトルに出して、新しい版か見分ける）
 
   if (location.hostname !== 'sig-platform.com') {
     alert('sig-platform.com にログインした画面で押してください。');
@@ -297,6 +297,27 @@
     });
   }
 
+  // 「5232 Airpods」のように JAN の末尾（4桁以上の数字）＋商品名の一部で書かれたもの（2026-10-22）
+  // サイトの検索は JAN の一部でも引けるが、数字と名前を一緒に入れると1件も出ないので、数字で探して名前で絞る
+  function byJan(text) {
+    var words = text.normalize('NFKC').trim().split(/\s+/);
+    var code = words.filter(function (w) { return /^\d{4,13}$/.test(w); });
+    if (code.length !== 1) return Promise.resolve(null);
+    var rest = words.filter(function (w) { return w !== code[0]; });
+    var kizu = rest.some(function (w) { return /^傷/.test(w); });
+    rest = rest.filter(function (w) { return !/^傷/.test(w); });
+    return search(code[0]).then(function (res) {
+      var hit = res.filter(function (r) {
+        return r.jan.replace(/^A/, '').slice(-code[0].length) === code[0] &&
+          rest.every(function (w) { return norm(r.name).indexOf(norm(w)) >= 0; });
+      });
+      // 【傷】の商品は JAN の頭に A が付いている。「傷」と書いていなければ傷なしを選ぶ
+      var pick = hit.filter(function (r) { return /^【傷/.test(r.name) === kizu; });
+      if (pick.length === 1) return { hit: pick[0], cands: hit };
+      return hit.length ? { res: hit } : null;
+    });
+  }
+
   // ---------- 照合 ----------
   function resolve(it) {
     return search(it.input).then(function (res) {
@@ -305,7 +326,18 @@
       return (it.whole ? search(it.whole) : Promise.resolve([])).then(function (res2) {
         var ex2 = res2.filter(function (r) { return norm(r.name) === norm(it.whole); });
         if (ex2.length) { it.input = it.whole; it.qty = 1; it.info = '末尾の数字は商品名の一部として扱いました（1個）'; return ex2; }
-        return byExpand(it).then(function (r) { return r || { res: res }; });
+        return byJan(it.input).then(function (j) {
+          // 「Airpods 5232」は末尾の数字が個数として読まれるので、行全体でも試す（そのときは1個）
+          if (!j && it.whole) return byJan(it.whole).then(function (j2) {
+            if (j2) { it.input = it.whole; it.qty = 1; it.info = '末尾の数字は JAN として扱いました（1個）'; }
+            return j2;
+          });
+          return j;
+        }).then(function (j) {
+          if (j && j.hit) { it.info = (it.info ? it.info + '。' : '') + '「' + it.input + '」→ JAN ' + j.hit.jan + ' の ' + j.hit.name + ' として扱いました'; it.cands = j.cands; return [j.hit]; }
+          if (j) return j;
+          return byExpand(it).then(function (r) { return r || { res: res }; });
+        });
       });
     }).then(function (r) {
       if (Array.isArray(r)) {
