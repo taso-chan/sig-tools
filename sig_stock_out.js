@@ -4,7 +4,7 @@
   'use strict';
   var LOCATION_ID = '3'; // 浅草橋
   var PANEL_ID = 'sig-stock-out-panel';
-  var VERSION = '10/22'; // 直したら更新する（小窓のタイトルに出して、新しい版か見分ける）
+  var VERSION = '10/27'; // 直したら更新する（小窓のタイトルに出して、新しい版か見分ける）
 
   if (location.hostname !== 'sig-platform.com') {
     alert('sig-platform.com にログインした画面で押してください。');
@@ -479,8 +479,8 @@
       fd.set('expected_before_stock', String(before)); // 読み直した後に在庫が動いていたらサイト側で止めてもらう
       fd.set('quantity', String(it.qty));
       fd.set('reason', state.reason);
-      // 足すときは「追加合計原価」が必須。平均原価×個数（未設定なら0円）にして、平均原価が変わらないようにする
-      if (state.sign > 0) fd.set('total_cost', String(Math.round((p.avgCost || 0) * it.qty)));
+      // 足すときは「単価（整数円）」が必須（2026-10-27 サイト更新で 追加合計原価 total_cost → 単価 unit_cost）。平均原価（未設定なら0円）を入れて、平均原価がほぼ変わらないようにする
+      if (state.sign > 0) fd.set('unit_cost', String(Math.round(p.avgCost || 0)));
       return fetch(form.action, { method: 'POST', body: fd, credentials: 'same-origin' }).then(function (r) {
         if (!r.ok) throw new Error('送信エラー HTTP ' + r.status);
         return historyToday(p);
