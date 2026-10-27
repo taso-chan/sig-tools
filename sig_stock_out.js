@@ -4,7 +4,7 @@
   'use strict';
   var LOCATION_ID = '3'; // 浅草橋
   var PANEL_ID = 'sig-stock-out-panel';
-  var VERSION = '10/27-C'; // 直したら更新する（小窓のタイトルに出して、新しい版か見分ける）
+  var VERSION = '10/27-D'; // 直したら更新する（小窓のタイトルに出して、新しい版か見分ける）
 
   if (location.hostname !== 'sig-platform.com') {
     alert('sig-platform.com にログインした画面で押してください。');
@@ -99,7 +99,13 @@
   }
 
   // 全カテゴリ在庫の検索 → [{cat, catName, sub, name, jan, stock}]
+  // 照合1回の間は同じ言葉の検索を使い回す（照合するたびに check() で空にする）
+  var searchCache = {};
   function search(keyword) {
+    if (!searchCache[keyword]) searchCache[keyword] = searchSite(keyword).catch(function (e) { delete searchCache[keyword]; throw e; });
+    return searchCache[keyword];
+  }
+  function searchSite(keyword) {
     return getDoc('/admin/category-stocks?location_id=' + LOCATION_ID + '&keyword=' + encodeURIComponent(keyword)).then(function (d) {
       var out = [];
       d.querySelectorAll('main table tbody tr').forEach(function (tr) {
@@ -236,12 +242,13 @@
     // ワンピースの「OP1」「op01」「EB4」→「OP-01」など（商品名は「OP-01 ロマンスドーン」）
     var op = core.match(/^(op|eb|prb|st)[-\s]?0*(\d{1,2})$/i);
     if (op) core = op[1].toUpperCase() + '-' + ('0' + op[2]).slice(-2);
+    var alias = !!ALIAS[norm(core)];
     var full = ALIAS[norm(core)] || core;
     var prefix = kind === 'カートン' ? (kizu ? '【傷・カートン】' : '【カートン】')
       : kind === 'パック' ? '【パック】'
       : noShrink ? (kizu ? '【傷・シュリンク無しBOX】' : '【シュリンク無しBOX】')
       : (kizu ? '【傷・BOX】' : '【BOX】');
-    return { full: full, prefix: prefix };
+    return { full: full, prefix: prefix, alias: alias };
   }
 
   // 30th CELEBRATION カードセット（2026-10-16 発売、御三家ごとに 9 種）。「30thセット ヒトカゲ」のように略称＋御三家の1匹で書く
@@ -323,6 +330,23 @@
 
   // ---------- 照合 ----------
   function resolve(it) {
+    // 略称一覧にある言葉（「テラス」「ムニキス」など）は、先に正式名で探す。1件に決まれば、そのままの検索は省く
+    var e = expand(it.input);
+    return (e && e.alias ? byAlias(it) : Promise.resolve(null)).then(function (a) {
+      if (Array.isArray(a)) return a;
+      it.info = null; it.cands = [];
+      return resolveFull(it);
+    }).then(function (r) {
+      if (Array.isArray(r)) {
+        if (r.length === 1) { it.pick = r[0]; return; }
+        it.cands = r; it.why = '同じ名前の商品が複数のカテゴリにあります。選んでください';
+        return;
+      }
+      return notFound(it, r);
+    }).then(function () { return it.pick ? load(it) : null; });
+  }
+
+  function resolveFull(it) {
     return search(it.input).then(function (res) {
       var exact = res.filter(function (r) { return norm(r.name) === norm(it.input); });
       if (exact.length) return exact;
@@ -342,22 +366,19 @@
           return byExpand(it).then(function (r) { return r || { res: res }; });
         });
       });
-    }).then(function (r) {
-      if (Array.isArray(r)) {
-        if (r.length === 1) { it.pick = r[0]; return; }
-        it.cands = r; it.why = '同じ名前の商品が複数のカテゴリにあります。選んでください';
-        return;
-      }
-      if (r.res.length) { it.cands = r.res.slice(0, 50); it.why = '商品名が完全には一致しません。候補から選んでください'; return; }
-      // 1件も無いときは、【】を外した一番長い語で探し直す
-      var words = it.input.normalize('NFKC').replace(/【[^】]*】|\[[^\]]*\]|［[^］]*］/g, ' ').split(/\s+/).filter(Boolean)
-        .sort(function (a, b) { return b.length - a.length; });
-      if (!words.length) { it.why = '商品が見つかりません'; return; }
-      return search(words[0]).then(function (res3) {
-        it.cands = res3.slice(0, 50);
-        it.why = res3.length ? '商品名が見つかりません。候補から選んでください' : '商品が見つかりません';
-      });
-    }).then(function () { return it.pick ? load(it) : null; });
+    });
+  }
+
+  function notFound(it, r) {
+    if (r.res.length) { it.cands = r.res.slice(0, 50); it.why = '商品名が完全には一致しません。候補から選んでください'; return; }
+    // 1件も無いときは、【】を外した一番長い語で探し直す
+    var words = it.input.normalize('NFKC').replace(/【[^】]*】|\[[^\]]*\]|［[^］]*］/g, ' ').split(/\s+/).filter(Boolean)
+      .sort(function (a, b) { return b.length - a.length; });
+    if (!words.length) { it.why = '商品が見つかりません'; return; }
+    return search(words[0]).then(function (res3) {
+      it.cands = res3.slice(0, 50);
+      it.why = res3.length ? '商品名が見つかりません。候補から選んでください' : '商品が見つかりません';
+    });
   }
 
   function load(it) {
@@ -384,14 +405,23 @@
     if (bad.length) { setStatus('<b class="ng">個数が0以下の行があります（' + bad[0].lines.join(',') + '行目）</b>'); return; }
     state.items = items;
     $('preview').innerHTML = ''; $('result').innerHTML = ''; $('run').style.display = 'none';
-    var i = 0;
-    function next() {
-      if (i >= items.length) { setStatus('照合完了：' + items.length + '商品'); return; }
-      setStatus('照合中… ' + (i + 1) + ' / ' + items.length + '（' + esc(items[i].input) + '）');
-      return resolve(items[i++]).catch(function (e) { items[i - 1].why = e.message; }).then(next);
+    searchCache = {};
+    // 4商品ずつ同時に照合する（1商品ずつだと遅いため 2026-10-27）
+    var i = 0, fin = 0;
+    function worker() {
+      if (i >= items.length) return Promise.resolve();
+      var it = items[i++];
+      return resolve(it).catch(function (e) { it.why = e.message; }).then(function () {
+        fin++;
+        setStatus('照合中… ' + fin + ' / ' + items.length);
+        return worker();
+      });
     }
+    setStatus('照合中… 0 / ' + items.length);
     lock(true);
-    next().then(function () { lock(false); render(); }, function (e) { lock(false); setStatus('<b class="ng">エラー：' + esc(e.message) + '</b>'); });
+    var workers = [];
+    for (var w = 0; w < 4; w++) workers.push(worker());
+    Promise.all(workers).then(function () { lock(false); setStatus('照合完了：' + items.length + '商品'); render(); }, function (e) { lock(false); setStatus('<b class="ng">エラー：' + esc(e.message) + '</b>'); });
   }
 
   function render() {
