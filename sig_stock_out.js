@@ -4,7 +4,7 @@
   'use strict';
   var LOCATION_ID = '3'; // 浅草橋
   var PANEL_ID = 'sig-stock-out-panel';
-  var VERSION = '10/27-B'; // 直したら更新する（小窓のタイトルに出して、新しい版か見分ける）
+  var VERSION = '10/27-C'; // 直したら更新する（小窓のタイトルに出して、新しい版か見分ける）
 
   if (location.hostname !== 'sig-platform.com') {
     alert('sig-platform.com にログインした画面で押してください。');
@@ -131,10 +131,12 @@
       var reduce = d.querySelector('form[action$="/adjustments/reduce"]'), add = d.querySelector('form[action$="/adjustments/add"]');
       if (!reduce || !add) throw new Error('在庫の削減・追加フォームが見つかりません（サイトがまた変わった可能性）');
       var cost = tr.querySelector('[data-average-cost-open]');
+      var costRaw = cost ? cost.getAttribute('data-average-cost') : '';
       return {
         cat: cat, name: tr.children[2].textContent.trim(), jan: tr.children[1].textContent.trim(),
         pid: b.getAttribute('data-product-id'), stock: stock,
-        avgCost: cost ? parseFloat(cost.getAttribute('data-average-cost')) || null : null, // 小数あり。未設定なら null
+        avgCost: costRaw === '' || costRaw == null ? null : parseFloat(costRaw), // 小数あり。未設定なら null（0円は 0）
+        costBtn: cost, costForm: Array.prototype.find.call(d.querySelectorAll('form'), function (f) { return !!f.querySelector('[name="input_mode"]'); }),
         reduce: reduce, add: add
       };
     });
@@ -464,9 +466,51 @@
     next();
   }
 
+  // 送信後に返ってきた画面のメッセージ（「在庫を追加しました。」「平均原価が未設定です。…」など）
+  // 断られても HTTP 200 で画面が返るだけなので、これを見ないと理由が分からない（2026-10-27）
+  function pageMessage(text) {
+    var d = new DOMParser().parseFromString(text, 'text/html');
+    d.querySelectorAll('script,style,table,form,nav,aside').forEach(function (e) { e.remove(); });
+    var t = d.body.textContent.replace(/\s+/g, ' ');
+    var m = t.match(/在庫CSV(.*)$/);
+    return (m ? m[1] : '').trim().slice(0, 200);
+  }
+
+  // 平均原価が未設定だと「追加」はサイトに断られる（「先に開始原価を設定してから操作してください」）。
+  // 未設定のときは開始原価 0円 を入れてから足す（ユーザー指定 2026-10-27）
+  function setZeroCost(p) {
+    var b = p.costBtn, f = p.costForm;
+    if (!b || !f) return Promise.reject(new Error('平均原価の設定フォームが見つかりません（サイトがまた変わった可能性）'));
+    var fd = new FormData();
+    Array.prototype.forEach.call(f.elements, function (el) {
+      if (!el.name || el.type === 'submit' || el.type === 'button') return;
+      fd.append(el.name, el.value);
+    });
+    fd.set('product_id', b.getAttribute('data-product-id'));
+    fd.set('location_id', b.getAttribute('data-location-id'));
+    fd.set('expected_quantity', b.getAttribute('data-quantity'));
+    fd.set('expected_average_cost', b.getAttribute('data-average-cost') || '');
+    fd.set('expected_stock_fingerprint', b.getAttribute('data-fingerprint'));
+    fd.set('return_to', b.getAttribute('data-return-to') || '');
+    fd.set('input_mode', 'unit_cost');
+    fd.set('amount', '0');
+    fd.set('reason', state.reason);
+    return fetch(b.getAttribute('data-action'), { method: 'POST', body: fd, credentials: 'same-origin' }).then(function (r) {
+      if (!r.ok) throw new Error('平均原価の設定で送信エラー HTTP ' + r.status);
+      return r.text();
+    }).then(function (t) {
+      return getProduct(p.cat, p.name).then(function (p2) {
+        if (p2.avgCost == null) throw new Error('平均原価を0円にできませんでした：' + (pageMessage(t) || '理由不明'));
+        return p2;
+      });
+    });
+  }
+
   // 1商品：直前に在庫を読み直す → 「削減」「追加」で個数を送る → 在庫履歴で確かめる
   function one(it) {
     return getProduct(it.product.cat, it.product.name).then(function (p) {
+      return state.sign > 0 && p.avgCost == null ? setZeroCost(p) : p;
+    }).then(function (p) {
       var before = p.stock, after = before + delta(it);
       it.before = before; it.after = after;
       if (after < 0) throw new Error('在庫不足：今の在庫 ' + before + ' に対して ' + it.qty + '個は引けません');
@@ -480,14 +524,18 @@
       fd.set('expected_before_stock', String(before)); // 読み直した後に在庫が動いていたらサイト側で止めてもらう
       fd.set('quantity', String(it.qty));
       fd.set('reason', state.reason);
-      // 足すときは「単価（整数円）」が必須（2026-10-27 サイト更新で 追加合計原価 total_cost → 単価 unit_cost）。平均原価（未設定なら0円）を入れて、平均原価がほぼ変わらないようにする
+      // 足すときは「単価（整数円）」が必須（2026-10-27 サイト更新で 追加合計原価 total_cost → 単価 unit_cost）。平均原価（未設定なら上で0円にしてある）を入れて、平均原価がほぼ変わらないようにする
       if (state.sign > 0) fd.set('unit_cost', String(Math.round(p.avgCost || 0)));
+      var siteMsg = '';
       return fetch(form.action, { method: 'POST', body: fd, credentials: 'same-origin' }).then(function (r) {
         if (!r.ok) throw new Error('送信エラー HTTP ' + r.status);
+        return r.text();
+      }).then(function (t) {
+        siteMsg = pageMessage(t);
         return historyToday(p);
       }).then(function (hs) {
         var mine = hs.filter(function (h) { return isOurs(h) && h.after === after; })[0];
-        if (!mine) return { result: '要確認', msg: '在庫履歴に記録が見つかりません。在庫管理画面で確認してください（送信前の在庫 ' + before + '）' };
+        if (!mine) return { result: '要確認', msg: '在庫履歴に記録が見つかりません。サイトの返事：「' + (siteMsg || 'なし') + '」（送信前の在庫 ' + before + '）' };
         if (mine.diff !== delta(it)) {
           return { result: '要確認', msg: '入庫と重なった可能性：履歴の変更数は ' + signed(mine.diff) + '（' + mine.before + '→' + mine.after + '）。本来の変更数は ' + signed(delta(it)) };
         }
