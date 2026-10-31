@@ -10,7 +10,7 @@
   try { var savedLoc = localStorage.getItem(LOC_KEY); if (LOCATIONS[savedLoc]) LOCATION_ID = savedLoc; } catch (e) {}
   var locName = function () { return LOCATIONS[LOCATION_ID]; };
   var PANEL_ID = 'sig-stock-out-panel';
-  var VERSION = '10/31'; // 直したら更新する（小窓のタイトルに出して、新しい版か見分ける）
+  var VERSION = '10/31-B'; // 直したら更新する（小窓のタイトルに出して、新しい版か見分ける）
 
   if (location.hostname !== 'sig-platform.com') {
     alert('sig-platform.com にログインした画面で押してください。');
@@ -397,8 +397,8 @@
       return historyToday(p).then(function (hs) {
         var done = hs.filter(isOurs).reduce(function (a, h) { return a + (h.diff || 0); }, 0);
         it.done = done; // 今日すでに同じ理由で動かした数（マイナス）
-        // サイト更新後は在庫より多くは引けない（在庫0以下だと「削減」ボタンが押せない）→ 送らずに赤で残す
-        if (p.stock + delta(it) < 0) { it.why = '在庫不足：在庫 ' + p.stock + ' に対して ' + it.qty + '個は引けません'; it.use = false; }
+        // 2026-10-31 サイト更新：在庫0以下でも「不足数追加」（同じ削減フォーム）で引けるようになった → 在庫が足りなくても引く（マイナス＝不足数になる）
+        if (p.stock + delta(it) < 0) it.info = (it.info ? it.info + '／' : '') + '在庫が足りないので、引いた後は不足数 ' + (-(p.stock + delta(it))) + ' になります';
       });
     }).catch(function (e) { it.product = null; it.why = e.message; it.use = false; });
   }
@@ -457,7 +457,7 @@
             return '<option value="' + ci + '"' + (sel ? ' selected' : '') + '>' + esc(c.name) + '（' + esc(c.catName) + '・在庫' + c.stock + '）</option>';
           }).join('') + '</select>';
       }
-      html += '</td><td class="n">' + (p ? p.stock : '') + '</td><td class="n"><b>' + signed(delta(it)) + '</b></td><td class="n">' + (p ? (p.stock + delta(it) < 0 ? '<b class="ng">' + (p.stock + delta(it)) + '</b>' : p.stock + delta(it)) : '') + '</td><td>' +
+      html += '</td><td class="n">' + (p ? p.stock : '') + '</td><td class="n"><b>' + signed(delta(it)) + '</b></td><td class="n">' + (p ? (p.stock + delta(it) < 0 ? '<b class="info">' + (p.stock + delta(it)) + '</b>' : p.stock + delta(it)) : '') + '</td><td>' +
         (it.why ? '<span class="ng">' + esc(it.why) + '</span><br>' : '') +
         (it.info ? '<span class="info">' + esc(it.info) + '</span><br>' : '') +
         (it.done ? '<span class="info">今日すでに動かした分：' + signed(it.done) + '</span>' : '') +
@@ -548,11 +548,11 @@
   // 1商品：直前に在庫を読み直す → 「削減」「追加」で個数を送る → 在庫履歴で確かめる
   function one(it) {
     return getProduct(it.product.cat, it.product.name).then(function (p) {
-      return state.sign > 0 && p.avgCost == null ? setZeroCost(p) : p;
+      // 平均原価が未設定で「原価を設定」ボタンがある時だけ先に0円にする（在庫0の商品はボタンが無いので、そのまま単価0円で足す）
+      return state.sign > 0 && p.avgCost == null && p.costBtn ? setZeroCost(p) : p;
     }).then(function (p) {
       var before = p.stock, after = before + delta(it);
       it.before = before; it.after = after;
-      if (after < 0) throw new Error('在庫不足：今の在庫 ' + before + ' に対して ' + it.qty + '個は引けません');
       var form = state.sign > 0 ? p.add : p.reduce;
       var fd = new FormData();
       Array.prototype.forEach.call(form.elements, function (el) {
@@ -563,8 +563,9 @@
       fd.set('expected_before_stock', String(before)); // 読み直した後に在庫が動いていたらサイト側で止めてもらう
       fd.set('quantity', String(it.qty));
       fd.set('reason', state.reason);
-      // 足すときは「単価（整数円）」が必須（2026-10-27 サイト更新で 追加合計原価 total_cost → 単価 unit_cost）。平均原価（未設定なら上で0円にしてある）を入れて、平均原価がほぼ変わらないようにする
-      if (state.sign > 0) fd.set('unit_cost', String(Math.round(p.avgCost || 0)));
+      // 足すときは「単価（整数円）」が必須（2026-10-27 サイト更新で 追加合計原価 total_cost → 単価 unit_cost）。
+      // 原価は全部0円で入れる（ユーザー指定 2026-10-31）
+      if (state.sign > 0) fd.set('unit_cost', '0');
       var siteMsg = '';
       return fetch(form.action, { method: 'POST', body: fd, credentials: 'same-origin' }).then(function (r) {
         if (!r.ok) throw new Error('送信エラー HTTP ' + r.status);
