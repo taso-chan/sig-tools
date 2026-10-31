@@ -1,10 +1,16 @@
 // SIG在庫引きツール（sig-platform の上でブックマークから起動）
-// 商品名と個数の一覧を受け取り、浅草橋の在庫を手で減らす／増やす（カテゴリ在庫画面の「削減」「追加」と同じ送信）。
+// 商品名と個数の一覧を受け取り、選んだ拠点（浅草橋／浅草橋-発送代行）の在庫を手で減らす／増やす（カテゴリ在庫画面の「削減」「追加」と同じ送信）。
 (function () {
   'use strict';
-  var LOCATION_ID = '3'; // 浅草橋
+  // 拠点（2026-10-31 発送代行も追加。サイトの「在庫管理-浅草橋-発送代行」= location_id 6）
+  // 送信フォームには読みに行った画面の location_id が入っているので、切り替えるのは読みに行く URL だけでよい
+  var LOCATIONS = { '3': '浅草橋', '6': '浅草橋-発送代行' };
+  var LOC_KEY = 'sig-stock-out-location';
+  var LOCATION_ID = '3';
+  try { var savedLoc = localStorage.getItem(LOC_KEY); if (LOCATIONS[savedLoc]) LOCATION_ID = savedLoc; } catch (e) {}
+  var locName = function () { return LOCATIONS[LOCATION_ID]; };
   var PANEL_ID = 'sig-stock-out-panel';
-  var VERSION = '10/27-D'; // 直したら更新する（小窓のタイトルに出して、新しい版か見分ける）
+  var VERSION = '10/31'; // 直したら更新する（小窓のタイトルに出して、新しい版か見分ける）
 
   if (location.hostname !== 'sig-platform.com') {
     alert('sig-platform.com にログインした画面で押してください。');
@@ -35,7 +41,10 @@
     '#' + PANEL_ID + ' tr.skip td{background:#fbe9e7}' +
     '</style>' +
     '<button class="x" data-act="close" title="閉じる">×</button>' +
-    '<h2 data-role="handle">SIG 在庫引き（浅草橋）<small>' + VERSION + '版・ここをドラッグで移動</small></h2>' +
+    '<h2 data-role="handle">SIG 在庫引き（<span data-role="locname">' + locName() + '</span>）<small>' + VERSION + '版・ここをドラッグで移動</small></h2>' +
+    '<div class="box" style="margin-top:0">拠点：' + Object.keys(LOCATIONS).map(function (id) {
+      return '<label><input type="radio" name="sig-loc" value="' + id + '"' + (id === LOCATION_ID ? ' checked' : '') + '> <b>' + LOCATIONS[id] + '</b></label>';
+    }).join('　') + '</div>' +
     '<div>① その日に抜いた商品を1行に1商品ずつ（「商品名 個数」、個数を省くと1個）</div>' +
     '<textarea data-role="input" placeholder="【BOX】アビスアイ 2&#10;【BOX】ニンジャスピナー ×3"></textarea>' +
     '<div style="margin:6px 0">' +
@@ -427,7 +436,7 @@
   function render() {
     var its = state.items;
     var ready = its.filter(function (it) { return it.product && !it.why; });
-    var html = '<div class="box"><b class="ok">' + state.word + 'ができる：' + ready.length + '商品</b>' +
+    var html = '<div class="box">拠点：<b>' + locName() + '</b>　<b class="ok">' + state.word + 'ができる：' + ready.length + '商品</b>' +
       (state.sign > 0 ? '　<b class="info">【足す】</b>' : '　<b>【引く】</b>');
     var ng = its.length - ready.length;
     if (ng) html += '　<b class="ng">要対応：' + ng + '商品</b>（赤い行）';
@@ -469,7 +478,7 @@
     var target = state.items.filter(function (it) { return it.product && !it.why && it.use && !it.result; });
     if (!target.length) return;
     var total = target.reduce(function (a, it) { return a + it.qty; }, 0);
-    if (!confirm((state.sign > 0 ? '【足す】浅草橋の在庫に ' : '【引く】浅草橋の在庫から ') + target.length + '商品（合計 ' + total + '個）を' + state.word + 'ます。\n' +
+    if (!confirm((state.sign > 0 ? '【足す】' + locName() + 'の在庫に ' : '【引く】' + locName() + 'の在庫から ') + target.length + '商品（合計 ' + total + '個）を' + state.word + 'ます。\n' +
       '在庫履歴に「' + (state.sign > 0 ? '手動在庫追加' : '手動在庫削減') + '・' + state.reason + '」として残ります。\n元に戻すには在庫管理画面で手で直す必要があります。\n\n実行しますか？')) return;
     lock(true);
     var ok = 0, ng = 0, i = 0;
@@ -621,6 +630,16 @@
   });
   panel.addEventListener('change', function (e) {
     var t = e.target;
+    if (t.name === 'sig-loc') {
+      // 拠点を変えたら照合し直す（在庫も送信先も拠点ごとに別）。次に開いた時も同じ拠点にする
+      LOCATION_ID = t.value;
+      try { localStorage.setItem(LOC_KEY, LOCATION_ID); } catch (e2) { }
+      $('locname').textContent = locName();
+      state.items = [];
+      $('preview').innerHTML = ''; $('result').innerHTML = ''; $('run').style.display = 'none';
+      setStatus('<b class="info">拠点を「' + esc(locName()) + '」に切り替えました。「照合する」を押してください。</b>');
+      return;
+    }
     if (t.name === 'sig-mode') {
       // 照合した時の「引く／足す」で確認一覧を作っているので、切り替えたら照合し直す
       state.items = [];
