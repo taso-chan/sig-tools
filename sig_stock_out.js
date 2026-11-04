@@ -12,7 +12,7 @@
   // 移動（2026-11-04）：選んだ拠点から、もう一方の拠点へ（浅草橋 ⇔ 浅草橋-発送代行）
   var otherLoc = function () { return LOCATION_ID === '3' ? '6' : '3'; };
   var PANEL_ID = 'sig-stock-out-panel';
-  var VERSION = '11/04'; // 直したら更新する（小窓のタイトルに出して、新しい版か見分ける）
+  var VERSION = '11/04-B'; // 直したら更新する（小窓のタイトルに出して、新しい版か見分ける）
 
   if (location.hostname !== 'sig-platform.com') {
     alert('sig-platform.com にログインした画面で押してください。');
@@ -87,7 +87,8 @@
       var name = line, qty = 1, whole = null, m;
       // 「名前<タブ or ,>2」「名前 ×2」「名前 2個」
       if ((m = line.match(/^(.+?)\s*[\t,，]\s*([0-9０-９]+)\s*(?:個|点|箱|枚|BOX)?$/i)) ||
-          (m = line.match(/^(.+?)\s*[×xX＊*]\s*([0-9０-９]+)\s*(?:個|点|箱|枚|BOX)?$/)) ||
+          // x は英字の直後だと商品名の一部（「シャイニートレジャーex 1」を「…e ×1」と読んでいた 2026-11-04）
+          (m = line.match(/^(.+?)(?:\s*[×＊*]|\s+[xX]|(?<=[^A-Za-z\s])[xX])\s*([0-9０-９]+)\s*(?:個|点|箱|枚|BOX)?$/)) ||
           (m = line.match(/^(.+?)\s+([0-9０-９]+)\s*(?:個|点|箱|枚|BOX)?$/i))) {
         name = m[1].trim();
         qty = parseInt(m[2].normalize('NFKC'), 10);
