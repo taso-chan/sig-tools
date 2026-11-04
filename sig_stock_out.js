@@ -12,7 +12,7 @@
   // 移動（2026-11-04）：選んだ拠点から、もう一方の拠点へ（浅草橋 ⇔ 浅草橋-発送代行）
   var otherLoc = function () { return LOCATION_ID === '3' ? '6' : '3'; };
   var PANEL_ID = 'sig-stock-out-panel';
-  var VERSION = '11/04-B'; // 直したら更新する（小窓のタイトルに出して、新しい版か見分ける）
+  var VERSION = '11/04-C'; // 直したら更新する（小窓のタイトルに出して、新しい版か見分ける）
 
   if (location.hostname !== 'sig-platform.com') {
     alert('sig-platform.com にログインした画面で押してください。');
@@ -81,7 +81,8 @@
   function parseInput(text) {
     var map = {}, list = [];
     text.split(/\r?\n/).forEach(function (raw, i) {
-      var line = raw.trim();
+      // 先頭の箇条書きの記号（・ • ● ◯ - ＊ など）は外す（「・シャイニートレジャーex」が全部赤くなった 2026-11-04）
+      var line = raw.trim().replace(/^[・･•●○◯◆◇■□▪▫\-－‐ー—―*＊>＞]+\s*/, '').trim();
       if (!line) return;
       if (/^(午前|午後|朝|昼|夕方?|夜)?の?ピック[:：]?$/.test(line)) return; // 報告の見出し「午前ピック」などは飛ばす
       var name = line, qty = 1, whole = null, m;
