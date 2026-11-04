@@ -9,8 +9,10 @@
   var LOCATION_ID = '3';
   try { var savedLoc = localStorage.getItem(LOC_KEY); if (LOCATIONS[savedLoc]) LOCATION_ID = savedLoc; } catch (e) {}
   var locName = function () { return LOCATIONS[LOCATION_ID]; };
+  // 移動（2026-11-04）：選んだ拠点から、もう一方の拠点へ（浅草橋 ⇔ 浅草橋-発送代行）
+  var otherLoc = function () { return LOCATION_ID === '3' ? '6' : '3'; };
   var PANEL_ID = 'sig-stock-out-panel';
-  var VERSION = '10/31-B'; // 直したら更新する（小窓のタイトルに出して、新しい版か見分ける）
+  var VERSION = '11/04'; // 直したら更新する（小窓のタイトルに出して、新しい版か見分ける）
 
   if (location.hostname !== 'sig-platform.com') {
     alert('sig-platform.com にログインした画面で押してください。');
@@ -50,6 +52,7 @@
     '<div style="margin:6px 0">' +
     '<label><input type="radio" name="sig-mode" value="-1" checked> <b>引く</b></label>　' +
     '<label><input type="radio" name="sig-mode" value="1"> <b>足す</b>（戻す・入れ直し）</label>　' +
+    '<label><input type="radio" name="sig-mode" value="0"> <b>移動</b>（<span data-role="movedir">' + locName() + ' → ' + LOCATIONS[otherLoc()] + '</span>・受け取り確定まで）</label><br>' +
     '詳細理由：<input type="text" data-role="reason" value="dopa" style="width:120px"> ' +
     '<button data-act="check">照合する</button></div>' +
     '<div data-role="status"></div>' +
@@ -394,6 +397,12 @@
     it.why = null;
     return getProduct(it.pick.cat, it.pick.name).then(function (p) {
       it.product = p;
+      if (state.move) {
+        // 移動は在庫履歴の「手動〜」に残らないので、今日の二重チェックはしない
+        it.done = 0;
+        if (p.stock < it.qty) it.info = (it.info ? it.info + '／' : '') + '在庫が ' + p.stock + ' しかありません（移動はサイトに断られるかもしれません）';
+        return;
+      }
       return historyToday(p).then(function (hs) {
         var done = hs.filter(isOurs).reduce(function (a, h) { return a + (h.diff || 0); }, 0);
         it.done = done; // 今日すでに同じ理由で動かした数（マイナス）
@@ -406,8 +415,10 @@
   function check() {
     var items = parseInput($('input').value);
     state.reason = $('reason').value.trim();
-    state.sign = +panel.querySelector('input[name="sig-mode"]:checked').value;
-    state.word = state.sign > 0 ? '足し' : '引き';
+    var mode = +panel.querySelector('input[name="sig-mode"]:checked').value;
+    state.move = mode === 0;
+    state.sign = state.move ? -1 : mode; // 移動は移動元から見ると減る
+    state.word = state.move ? '移動し' : state.sign > 0 ? '足し' : '引き';
     if (!state.reason) { setStatus('<b class="ng">詳細理由を入れてください。</b>'); return; }
     if (!items.length) { setStatus('<b class="ng">商品が入っていません。</b>'); return; }
     var bad = items.filter(function (it) { return !(it.qty > 0); });
@@ -437,7 +448,7 @@
     var its = state.items;
     var ready = its.filter(function (it) { return it.product && !it.why; });
     var html = '<div class="box">拠点：<b>' + locName() + '</b>　<b class="ok">' + state.word + 'ができる：' + ready.length + '商品</b>' +
-      (state.sign > 0 ? '　<b class="info">【足す】</b>' : '　<b>【引く】</b>');
+      (state.move ? '　<b class="info">【移動】' + esc(locName()) + ' → ' + esc(LOCATIONS[otherLoc()]) + '</b>' : state.sign > 0 ? '　<b class="info">【足す】</b>' : '　<b>【引く】</b>');
     var ng = its.length - ready.length;
     if (ng) html += '　<b class="ng">要対応：' + ng + '商品</b>（赤い行）';
     var dup = its.filter(function (it) { return it.product && it.done; });
@@ -468,7 +479,7 @@
     $('preview').innerHTML = html;
     $('run').style.display = ready.length ? '' : 'none';
     $('word').textContent = state.word;
-    $('runbtn').textContent = '在庫を' + (state.sign > 0 ? '足す' : '引く');
+    $('runbtn').textContent = state.move ? LOCATIONS[otherLoc()] + 'へ移動出庫して受け取り確定' : '在庫を' + (state.sign > 0 ? '足す' : '引く');
   }
 
   function lock(on) { panel.querySelectorAll('button,input,textarea,select').forEach(function (el) { if (!el.classList.contains('x')) el.disabled = on; }); }
@@ -478,6 +489,7 @@
     var target = state.items.filter(function (it) { return it.product && !it.why && it.use && !it.result; });
     if (!target.length) return;
     var total = target.reduce(function (a, it) { return a + it.qty; }, 0);
+    if (state.move) return runMove(target, total);
     if (!confirm((state.sign > 0 ? '【足す】' + locName() + 'の在庫に ' : '【引く】' + locName() + 'の在庫から ') + target.length + '商品（合計 ' + total + '個）を' + state.word + 'ます。\n' +
       '在庫履歴に「' + (state.sign > 0 ? '手動在庫追加' : '手動在庫削減') + '・' + state.reason + '」として残ります。\n元に戻すには在庫管理画面で手で直す必要があります。\n\n実行しますか？')) return;
     lock(true);
@@ -503,6 +515,130 @@
       render();
     }
     next();
+  }
+
+  // ---------- 移動（2026-11-04） ----------
+  // 画面での手順：カテゴリ在庫画面で商品の「選択」にチェック→数量→上の「移動先拠点」→「選択商品をまとめて移動出庫」
+  // → 移動先の拠点の「拠点間移動履歴」で「受け取り確定」。フォームはカテゴリごとなので、カテゴリごとに1回ずつ送る
+  // 出庫：POST /admin/category-stocks/{cat}/transfers（#bulk-transfer-form の hidden ＋ destination_location_id・note・items[i][selected/product_id/quantity]）
+  // 受取：PATCH /admin/category-stocks/{cat}/transfers/{移動ID}/receive（移動先の拠点で見た履歴の行のフォーム）
+  function transferRows(cat, loc) {
+    return getDoc('/admin/category-stocks/' + cat + '/transfer-histories?location_id=' + loc).then(function (d) {
+      var rows = [];
+      d.querySelectorAll('main table tbody tr').forEach(function (tr) {
+        var c = Array.prototype.map.call(tr.children, function (td) { return td.textContent.replace(/\s+/g, ' ').trim(); });
+        var id = num(c[0]);
+        if (id == null || c.length < 6) return;
+        var lines = {};
+        // 明細「JAN / 商品名 / 数量: n」
+        var re = /(\S+) \/ (.+?) \/ 数量: ?(-?\d+)/g, m;
+        while ((m = re.exec(c[5]))) lines[norm(m[2])] = (lines[norm(m[2])] || 0) + +m[3];
+        rows.push({ id: id, from: c[2], to: c[3], status: c[4], lines: lines, receive: tr.querySelector('form[action*="/receive"]') });
+      });
+      return rows;
+    });
+  }
+  var sameItems = function (row, its) {
+    return Object.keys(row.lines).length === its.length && its.every(function (it) { return row.lines[norm(it.product.name)] === it.qty; });
+  };
+  var formData = function (form) {
+    var fd = new FormData();
+    Array.prototype.forEach.call(form.elements, function (el) {
+      if (!el.name || el.type === 'submit' || el.type === 'button' || el.type === 'checkbox') return;
+      fd.append(el.name, el.value);
+    });
+    return fd;
+  };
+
+  function runMove(target, total) {
+    var src = LOCATION_ID, dest = otherLoc();
+    if (!confirm('【移動】' + LOCATIONS[src] + ' → ' + LOCATIONS[dest] + '\n' + target.length + '商品（合計 ' + total + '個）を移動出庫して、そのまま' + LOCATIONS[dest] + '側で受け取り確定します。\n' +
+      '元に戻すには、逆向きにもう一度移動する必要があります。\n\n実行しますか？')) return;
+    lock(true);
+    var cats = [], byCat = {};
+    target.forEach(function (it) {
+      if (!byCat[it.product.cat]) { byCat[it.product.cat] = []; cats.push(it.product.cat); }
+      byCat[it.product.cat].push(it);
+    });
+    var ci = 0;
+    function next() {
+      if (ci >= cats.length) return done();
+      var cat = cats[ci++], its = byCat[cat];
+      setStatus('移動中… カテゴリ ' + ci + ' / ' + cats.length + '（' + its.length + '商品）');
+      return moveCat(cat, its, src, dest).catch(function (e) {
+        its.forEach(function (it) { if (!it.result) { it.result = '失敗'; it.msg = e.message; } });
+      }).then(function () {
+        its.forEach(function (it) {
+          state.log.push([today(), it.lines.join(' '), it.product.pid, it.product.jan, it.product.name, '移動 ' + LOCATIONS[src] + '→' + LOCATIONS[dest] + ' ' + it.qty, it.before, it.after, state.reason, it.result, it.msg || '']);
+        });
+        return wait(300);
+      }).then(next);
+    }
+    function done() {
+      var ok = target.filter(function (it) { return it.result === '成功'; }).length;
+      setStatus('<b class="' + (ok < target.length ? 'ng' : 'ok') + '">完了：成功 ' + ok + '商品 / 失敗・要確認 ' + (target.length - ok) + '商品</b>');
+      $('result').innerHTML = '<div class="box"><button data-act="log">結果をCSVで保存</button></div>';
+      lock(false);
+      render();
+    }
+    next();
+  }
+
+  function moveCat(cat, its, src, dest) {
+    var form, maxId = 0, transfer;
+    var fail = function (msg) { its.forEach(function (it) { it.result = '要確認'; it.msg = msg; }); };
+    // 直前の在庫を読み直す（結果の確認用）
+    return Promise.all(its.map(function (it) { return getProduct(cat, it.product.name).then(function (p) { it.before = p.stock; }); })).then(function () {
+      return getDoc('/admin/category-stocks/' + cat + '?location_id=' + src);
+    }).then(function (d) {
+      form = d.getElementById('bulk-transfer-form') || d.querySelector('form[data-bulk-transfer-form]');
+      if (!form) throw new Error('「まとめて移動出庫」のフォームが見つかりません（サイトが変わった可能性）');
+      var sel = form.querySelector('[name="destination_location_id"]');
+      if (!sel || !Array.prototype.some.call(sel.options, function (o) { return o.value === dest; })) throw new Error('移動先に「' + LOCATIONS[dest] + '」が選べません');
+      return transferRows(cat, dest);
+    }).then(function (rows) {
+      rows.forEach(function (r) { if (r.id > maxId) maxId = r.id; });
+      var fd = formData(form);
+      fd.set('destination_location_id', dest);
+      fd.set('note', state.reason);
+      its.forEach(function (it, i) {
+        fd.append('items[' + i + '][selected]', '1');
+        fd.append('items[' + i + '][product_id]', it.product.pid);
+        fd.append('items[' + i + '][quantity]', String(it.qty));
+      });
+      return fetch(form.getAttribute('action'), { method: 'POST', body: fd, credentials: 'same-origin' });
+    }).then(function (r) {
+      if (!r.ok) throw new Error('移動出庫の送信エラー HTTP ' + r.status);
+      return r.text();
+    }).then(function (t) {
+      var siteMsg = pageMessage(t);
+      return transferRows(cat, dest).then(function (rows) {
+        transfer = rows.filter(function (r) { return r.id > maxId && r.from === LOCATIONS[src] && r.to === LOCATIONS[dest] && sameItems(r, its); })[0];
+        if (!transfer) { fail('移動履歴に今回の出庫が見つかりません。サイトの返事：「' + (siteMsg || 'なし') + '」'); return null; }
+        if (!transfer.receive) { fail('出庫はできました（移動ID ' + transfer.id + '・' + transfer.status + '）が、受け取り確定のボタンがありません。履歴を確認してください'); return null; }
+        return fetch(transfer.receive.getAttribute('action'), { method: 'POST', body: formData(transfer.receive), credentials: 'same-origin' }).then(function (r) {
+          if (!r.ok) throw new Error('出庫はできました（移動ID ' + transfer.id + '）が、受け取り確定で送信エラー HTTP ' + r.status);
+          return r.text();
+        }).then(function (t2) {
+          var msg2 = pageMessage(t2);
+          return transferRows(cat, dest).then(function (rows2) {
+            var now = rows2.filter(function (r) { return r.id === transfer.id; })[0];
+            if (!now || now.status.indexOf('受取済') < 0) { fail('出庫はできました（移動ID ' + transfer.id + '）が、受け取り確定が確認できません。サイトの返事：「' + (msg2 || 'なし') + '」'); return null; }
+            return true;
+          });
+        });
+      });
+    }).then(function (okd) {
+      if (!okd) return;
+      // 移動元の在庫が減ったか確かめる
+      return Promise.all(its.map(function (it) {
+        return getProduct(cat, it.product.name).then(function (p) {
+          it.after = p.stock;
+          if (p.stock === it.before - it.qty) { it.result = '成功'; it.msg = '移動ID ' + transfer.id + '・受取済（' + LOCATIONS[src] + ' ' + it.before + ' → ' + p.stock + '）'; }
+          else { it.result = '要確認'; it.msg = '移動ID ' + transfer.id + '・受取済だが、' + LOCATIONS[src] + 'の在庫が ' + it.before + ' → ' + p.stock + '（本来は ' + (it.before - it.qty) + '）'; }
+        });
+      }));
+    });
   }
 
   // 送信後に返ってきた画面のメッセージ（「在庫を追加しました。」「平均原価が未設定です。…」など）
@@ -636,6 +772,7 @@
       LOCATION_ID = t.value;
       try { localStorage.setItem(LOC_KEY, LOCATION_ID); } catch (e2) { }
       $('locname').textContent = locName();
+      $('movedir').textContent = locName() + ' → ' + LOCATIONS[otherLoc()];
       state.items = [];
       $('preview').innerHTML = ''; $('result').innerHTML = ''; $('run').style.display = 'none';
       setStatus('<b class="info">拠点を「' + esc(locName()) + '」に切り替えました。「照合する」を押してください。</b>');
@@ -645,7 +782,7 @@
       // 照合した時の「引く／足す」で確認一覧を作っているので、切り替えたら照合し直す
       state.items = [];
       $('preview').innerHTML = ''; $('result').innerHTML = ''; $('run').style.display = 'none';
-      setStatus('<b class="info">「' + (t.value === '1' ? '足す' : '引く') + '」に切り替えました。もう一度「照合する」を押してください。</b>');
+      setStatus('<b class="info">「' + (t.value === '1' ? '足す' : t.value === '0' ? '移動' : '引く') + '」に切り替えました。もう一度「照合する」を押してください。</b>');
       return;
     }
     if (t.hasAttribute('data-idx')) { state.items[+t.getAttribute('data-idx')].use = t.checked; return; }
