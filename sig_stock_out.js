@@ -447,7 +447,7 @@
   function render() {
     var its = state.items;
     var ready = its.filter(function (it) { return it.product && !it.why; });
-    var html = '<div class="box">拠点：<b>' + locName() + '</b>　<b class="ok">' + state.word + 'ができる：' + ready.length + '商品</b>' +
+    var html = '<div class="box">拠点：<b>' + locName() + '</b>　<b class="ok">' + (state.move ? '移動' : state.word) + 'ができる：' + ready.length + '商品</b>' +
       (state.move ? '　<b class="info">【移動】' + esc(locName()) + ' → ' + esc(LOCATIONS[otherLoc()]) + '</b>' : state.sign > 0 ? '　<b class="info">【足す】</b>' : '　<b>【引く】</b>');
     var ng = its.length - ready.length;
     if (ng) html += '　<b class="ng">要対応：' + ng + '商品</b>（赤い行）';
