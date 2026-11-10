@@ -1,10 +1,13 @@
 // SIG在庫引きツール（sig-platform の上でブックマークから起動）
-// 商品名と個数の一覧を受け取り、選んだ拠点（浅草橋／浅草橋-発送代行）の在庫を手で減らす／増やす（カテゴリ在庫画面の「削減」「追加」と同じ送信）。
+// 商品名と個数の一覧を受け取り、選んだ拠点（浅草橋／浅草橋-出荷代行）の在庫を手で減らす／増やす（カテゴリ在庫画面の「削減」「追加」と同じ送信）。
 (function () {
   'use strict';
   // 拠点（2026-10-31 発送代行も追加。サイトの「在庫管理-浅草橋-発送代行」= location_id 6）
   // 送信フォームには読みに行った画面の location_id が入っているので、切り替えるのは読みに行く URL だけでよい
-  var LOCATIONS = { '3': '浅草橋', '6': '浅草橋-発送代行' };
+  var LOCATIONS = { '3': '浅草橋', '6': '浅草橋-出荷代行' }; // 2026-11-10 サイトで「発送代行」→「出荷代行」に名前が変わった
+  // 移動履歴の出庫元・受取先は名前でしか出ないので、名前が変わっても当たるように拠点ごとに形で見る（浅草橋＝そのまま、6＝浅草橋-◯◯代行）
+  var LOC_MATCH = { '3': /^浅草橋$/, '6': /^浅草橋-.*代行$/ };
+  var isLoc = function (name, id) { return LOC_MATCH[id].test(String(name || '').trim()); };
   var LOC_KEY = 'sig-stock-out-location';
   var LOCATION_ID = '3';
   try { var savedLoc = localStorage.getItem(LOC_KEY); if (LOCATIONS[savedLoc]) LOCATION_ID = savedLoc; } catch (e) {}
@@ -12,7 +15,7 @@
   // 移動（2026-11-04）：選んだ拠点から、もう一方の拠点へ（浅草橋 ⇔ 浅草橋-発送代行）
   var otherLoc = function () { return LOCATION_ID === '3' ? '6' : '3'; };
   var PANEL_ID = 'sig-stock-out-panel';
-  var VERSION = '11/04-D'; // 直したら更新する（小窓のタイトルに出して、新しい版か見分ける）
+  var VERSION = '11/10'; // 直したら更新する（小窓のタイトルに出して、新しい版か見分ける）
 
   if (location.hostname !== 'sig-platform.com') {
     alert('sig-platform.com にログインした画面で押してください。');
@@ -85,7 +88,7 @@
       var line = raw.trim().replace(/^[・･•●○◯◆◇■□▪▫\-－‐ー—―*＊>＞]+\s*/, '').trim();
       if (!line) return;
       if (/^(午前|午後|朝|昼|夕方?|夜)?の?ピック[:：]?$/.test(line)) return; // 報告の見出し「午前ピック」などは飛ばす
-      var name = line, qty = 1, whole = null, m;
+      var name = line, qty = 1, whole = null, m, glued = false;
       // 「名前<タブ or ,>2」「名前 ×2」「名前 2個」
       if ((m = line.match(/^(.+?)\s*[\t,，]\s*([0-9０-９]+)\s*(?:個|点|箱|枚|BOX)?$/i)) ||
           // x は英字の直後だと商品名の一部（「シャイニートレジャーex 1」を「…e ×1」と読んでいた 2026-11-04）
@@ -94,10 +97,17 @@
         name = m[1].trim();
         qty = parseInt(m[2].normalize('NFKC'), 10);
         whole = line; // 「iPhone 16」のように末尾の数字が商品名の一部だった場合の予備
+      } else if ((m = line.match(/^(.*[぀-ヿ一-鿿])([0-9０-９]{1,3})\s*(?:個|点|箱|枚)?$/)) && !ALIAS_ANY[norm(line)]) {
+        // 「アルカナ8」「未来の一閃15」のように、かな・漢字の直後に個数がくっついている（2026-11-04 午前ピック）
+        // 「ポケモンカード151」のように数字まで商品名の略称・正式名になっているものは除く
+        name = m[1].trim();
+        qty = parseInt(m[2].normalize('NFKC'), 10);
+        whole = line;
+        glued = true;
       }
       var key = norm(name);
       if (map[key]) { map[key].qty += qty; map[key].lines.push(i + 1); return; }
-      map[key] = { lines: [i + 1], input: name, whole: whole, qty: qty, cands: [], pick: null, product: null, why: null, info: null, use: true };
+      map[key] = { lines: [i + 1], input: name, whole: whole, qty: qty, cands: [], pick: null, product: null, why: null, info: null, glue: glued ? '「' + line + '」を「' + name + '」×' + qty + ' と読みました' : null, use: true };
       list.push(map[key]);
     });
     return list;
@@ -238,6 +248,8 @@
   };
   var ALIAS = {};
   Object.keys(ALIASES).forEach(function (k) { ALIAS[norm(k)] = ALIASES[k]; });
+  var ALIAS_ANY = {}; // 略称・正式名のどちらか（「ポケモンカード151」の 151 を個数と読まないため）
+  Object.keys(ALIASES).forEach(function (k) { ALIAS_ANY[norm(k)] = 1; ALIAS_ANY[norm(ALIASES[k])] = 1; });
 
   // 「ストエメ」「ストエメ カートン」「アビスアイ 傷」→ 正式名と頭の【】（種類を書かなければ【BOX】）
   function expand(input) {
@@ -474,6 +486,7 @@
       }
       html += '</td><td class="n">' + (p ? p.stock : '') + '</td><td class="n"><b>' + signed(delta(it)) + '</b></td><td class="n">' + (p ? (p.stock + delta(it) < 0 ? '<b class="info">' + (p.stock + delta(it)) + '</b>' : p.stock + delta(it)) : '') + '</td><td>' +
         (it.why ? '<span class="ng">' + esc(it.why) + '</span><br>' : '') +
+        (it.glue ? '<span class="info">' + esc(it.glue) + '</span><br>' : '') +
         (it.info ? '<span class="info">' + esc(it.info) + '</span><br>' : '') +
         (it.done ? '<span class="info">今日すでに動かした分：' + signed(it.done) + '</span>' : '') +
         (it.result ? '<b class="' + (it.result === '成功' ? 'ok' : 'ng') + '">' + esc(it.result) + '</b> ' + esc(it.msg || '') : '') +
@@ -617,7 +630,7 @@
     }).then(function (t) {
       var siteMsg = pageMessage(t);
       return transferRows(cat, dest).then(function (rows) {
-        transfer = rows.filter(function (r) { return r.id > maxId && r.from === LOCATIONS[src] && r.to === LOCATIONS[dest] && sameItems(r, its); })[0];
+        transfer = rows.filter(function (r) { return r.id > maxId && isLoc(r.from, src) && isLoc(r.to, dest) && sameItems(r, its); })[0];
         if (!transfer) { fail('移動履歴に今回の出庫が見つかりません。サイトの返事：「' + (siteMsg || 'なし') + '」'); return null; }
         if (!transfer.receive) { fail('出庫はできました（移動ID ' + transfer.id + '・' + transfer.status + '）が、受け取り確定のボタンがありません。履歴を確認してください'); return null; }
         return fetch(transfer.receive.getAttribute('action'), { method: 'POST', body: formData(transfer.receive), credentials: 'same-origin' }).then(function (r) {
