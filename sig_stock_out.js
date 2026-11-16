@@ -15,7 +15,7 @@
   // 移動（2026-11-04）：選んだ拠点から、もう一方の拠点へ（浅草橋 ⇔ 浅草橋-発送代行）
   var otherLoc = function () { return LOCATION_ID === '3' ? '6' : '3'; };
   var PANEL_ID = 'sig-stock-out-panel';
-  var VERSION = '11/10'; // 直したら更新する（小窓のタイトルに出して、新しい版か見分ける）
+  var VERSION = '11/16'; // 直したら更新する（小窓のタイトルに出して、新しい版か見分ける）
 
   if (location.hostname !== 'sig-platform.com') {
     alert('sig-platform.com にログインした画面で押してください。');
@@ -238,6 +238,10 @@
     'イブヒロ': 'イーブイヒーローズ', 'ブイヒ': 'イーブイヒーローズ',
     'ガイスト': '漆黒のガイスト', 'シャイスタ': 'シャイニースターV', 'シャイニーV': 'シャイニースターV',
     'ストエメ': 'ストームエメラルダ', 'エメラルダ': 'ストームエメラルダ',
+    // 2026-11-16 午後ピックで当たらなかった略称（ユーザー確認済み）
+    'アビス': 'アビスアイ', 'シャイニーEX': 'シャイニートレジャーex',
+    // 【】の無い家電。エアポ＝JAN 末尾 5232（4549995635232）
+    'エアポ': 'AirPods Pro 第3世代 MFHP4J/A', 'AirPodsPro3': 'AirPods Pro 第3世代 MFHP4J/A', 'AirPods Pro 3': 'AirPods Pro 第3世代 MFHP4J/A',
     '25thアニコレ': '25th ANNIVERSARY COLLECTION', '25アニコレ': '25th ANNIVERSARY COLLECTION', 'アニコレ': '25th ANNIVERSARY COLLECTION',
     // ポケモンセンターのスペシャルBOX（午前ピックの報告では「トウホク 47」のように地名だけで来る。2026-10-20）
     'トウホク': 'スペシャルBOX トウホク', '東北': 'スペシャルBOX トウホク',
